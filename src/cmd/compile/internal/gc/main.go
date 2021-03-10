@@ -1352,9 +1352,9 @@ func pkgnotused(lineno src.XPos, path string, name string) {
 		elem = elem[i+1:]
 	}
 	if name == "" || elem == name {
-		yyerrorl(lineno, "imported and not used: %q", path)
+		yywarningl(lineno, "imported and not used: %q", path)
 	} else {
-		yyerrorl(lineno, "imported and not used: %q as %s", path, name)
+		yywarningl(lineno, "imported and not used: %q as %s", path, name)
 	}
 }
 

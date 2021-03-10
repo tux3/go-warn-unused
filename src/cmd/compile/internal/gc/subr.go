@@ -26,6 +26,7 @@ type Error struct {
 	msg string
 }
 
+var warnings []Error
 var errors []Error
 
 // largeStack is info about a function whose stack frame is too large (rare).
@@ -57,6 +58,13 @@ func adderrorname(n *Node) {
 	if len(errors) > 0 && errors[len(errors)-1].pos.Line() == n.Pos.Line() && errors[len(errors)-1].msg == old {
 		errors[len(errors)-1].msg = fmt.Sprintf("%v: undefined: %v in %v\n", n.Line(), n.Left, n)
 	}
+}
+
+func addwarn(pos src.XPos, format string, args ...interface{}) {
+	warnings = append(warnings, Error{
+		pos: pos,
+		msg: fmt.Sprintf("%v: warning: %s\n", linestr(pos), fmt.Sprintf(format, args...)),
+	})
 }
 
 func adderr(pos src.XPos, format string, args ...interface{}) {
@@ -95,6 +103,22 @@ func flusherrors() {
 	errors = errors[:0]
 }
 
+// flushwarnings sorts warnings seen so far by line number, prints them to stdout,
+// and empties the warnings array.
+func flushwarnings() {
+	Ctxt.Bso.Flush()
+	if len(warnings) == 0 {
+		return
+	}
+	sort.Stable(byPos(warnings))
+	for i, err := range warnings {
+		if i == 0 || err.msg != warnings[i-1].msg {
+			fmt.Printf("%s", err.msg)
+		}
+	}
+	warnings = warnings[:0]
+}
+
 func hcrash() {
 	if Debug.h != 0 {
 		flusherrors()
@@ -119,11 +143,57 @@ var lasterror struct {
 	msg    string   // error message of last non-syntax error
 }
 
+// lastwarning keeps track of the most recently issued warning.
+// It is used to avoid multiple warning messages on the same
+// line.
+var lastwarning struct {
+	syntax src.XPos // source position of last syntax warning
+	other  src.XPos // source position of last non-syntax warning
+	msg    string   // warning message of last non-syntax warning
+}
+
 // sameline reports whether two positions a, b are on the same line.
 func sameline(a, b src.XPos) bool {
 	p := Ctxt.PosTable.Pos(a)
 	q := Ctxt.PosTable.Pos(b)
 	return p.Base() == q.Base() && p.Line() == q.Line()
+}
+
+func yywarningl(pos src.XPos, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+
+	if strings.HasPrefix(msg, "syntax error") {
+		// only one syntax error per line, no matter what error
+		if sameline(lastwarning.syntax, pos) {
+			return
+		}
+		lastwarning.syntax = pos
+	} else {
+		// only one of multiple equal non-syntax errors per line
+		// (flusherrors shows only one of them, so we filter them
+		// here as best as we can (they may not appear in order)
+		// so that we don't count them here and exit early, and
+		// then have nothing to show for.)
+		if sameline(lastwarning.other, pos) && lastwarning.msg == msg {
+			return
+		}
+		lastwarning.other = pos
+		lastwarning.msg = msg
+	}
+
+	addwarn(pos, "%s", msg)
+
+	hcrash()
+	flushwarnings()
+}
+
+func yywarningv(lang string, format string, args ...interface{}) {
+	what := fmt.Sprintf(format, args...)
+	yywarningl(lineno, "%s requires %s or later (-lang was set to %s; check go.mod)", what, lang, flag_lang)
+}
+
+func yywarning(format string, args ...interface{}) {
+	yywarningl(lineno, format, args...)
 }
 
 func yyerrorl(pos src.XPos, format string, args ...interface{}) {
@@ -302,7 +372,7 @@ func importdot(opkg *types.Pkg, pack *Node) {
 
 	if n == 0 {
 		// can't possibly be used - there were no symbols
-		yyerrorl(pack.Pos, "imported and not used: %q", opkg.Path)
+		yywarningl(pack.Pos, "imported and not used: %q", opkg.Path)
 	}
 }
 
