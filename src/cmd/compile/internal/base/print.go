@@ -183,6 +183,14 @@ func WarnfAt(pos src.XPos, format string, args ...interface{}) {
 	}
 }
 
+// WarnfErrAt reports what would be an error as a warning at pos.
+func WarnfErrAt(pos src.XPos, code errors.Code, format string, args ...interface{}) {
+	addErrorMsg(pos, code, format, args...)
+	if Flag.LowerM != 0 {
+		FlushErrors()
+	}
+}
+
 // Fatalf reports a fatal error - an internal problem - at the current line and exits.
 // If other errors have already been printed, then Fatalf just quietly exits.
 // (The internal problem may have been caused by incomplete information
